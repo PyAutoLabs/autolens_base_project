@@ -161,20 +161,16 @@ def fit(dataset_name, sample_name):
     )
 
     """
-    __SOURCE LP PIPELINE — stage 0: light only__
+    __Model + Search + Analysis + Model-Fit (Search 1)__
 
-    Fits MGE light profiles for every main lens galaxy simultaneously with no
-    mass model and no source. Extra lens galaxies are also fit with light-only
-    MGE profiles.
+    Search 1 of the SOURCE LP PIPELINE fits a lens model where:
 
-    The result initializes:
-      - bulge centres for each main lens (used as mass_centre in stage 1)
-      - extra lens galaxy luminosities (used to bound mass Einstein radii in stage 1)
-    """
-    """
-    __Analysis__
+     - Every main lens galaxy is modeled using a free MGE light profile [no prior initialization].
+     - Every extra galaxy is modeled using a free MGE light profile [no prior initialization].
+     - Every scaling galaxy is modeled using a free MGE light profile [no prior initialization].
 
-    No adapt images or positions likelihood; light-only, no lensing geometry to constrain.
+    This search aims to accurately estimate the light distribution of all galaxies before the
+    mass model and source are introduced.
     """
     analysis = al.AnalysisImaging(dataset=dataset)
 
@@ -236,15 +232,6 @@ def fit(dataset_name, sample_name):
     extra_galaxies = extra_galaxies_free
     scaling_galaxies = scaling_galaxies_free
 
-    """
-    __Model__
-
-    source_lp[0] fits a model where:
-
-     - Every main lens galaxy has a free MGE light profile (no mass, no source).
-     - Every extra galaxy has a free MGE light profile.
-     - Every scaling galaxy has a free MGE light profile.
-    """
     lens_dict = {f"lens_{i}": m for i, m in enumerate(lens_galaxy_models)}
 
     model = af.Collection(
@@ -257,11 +244,6 @@ def fit(dataset_name, sample_name):
     n_scaling = len(scaling_galaxies) if scaling_galaxies is not None else 0
     n_live = 100 + 30 * len(lens_galaxy_models) + 30 * n_extra + 30 * n_scaling
 
-    """
-    __Search__
-
-    n_live scales with the total number of galaxies across all three populations.
-    """
     search = af.Nautilus(
         name="source_lp[0]",
         **settings_search.search_dict,
@@ -273,23 +255,21 @@ def fit(dataset_name, sample_name):
     source_lp_result_0 = search.fit(model=model, analysis=analysis, **settings_search.fit_dict)
 
     """
-    __SOURCE LP PIPELINE — stage 1: full LP fit__
+    __Model + Search + Analysis + Model-Fit (Search 2)__
 
-    Introduces mass and source. For each main lens:
-      - bulge is fixed to the stage-0 instance (light already well-characterized)
-      - mass centre is pinned to the stage-0 bulge centre
-      - mass Einstein radius has a broad uniform prior
-      - ExternalShear is free
+    Search 2 of the SOURCE LP PIPELINE fits a lens model where:
 
-    Extra lens galaxies have light fixed from stage 0; mass Einstein radii are
-    bounded by the stage-0 luminosity (same luminosity-scaling bound as group.py).
+     - Every main lens galaxy has light fixed from source_lp[0] and a free Isothermal
+       mass (centre pinned to the stage-0 bulge centre, broad Einstein radius prior).
+       ExternalShear is free on lens_0 only.
+     - Every extra galaxy has light fixed from source_lp[0] and a free Isothermal mass
+       bounded by the stage-0 luminosity.
+     - Every scaling galaxy has light fixed from source_lp[0] and mass set by a shared
+       free luminosity scaling relation.
+     - The source galaxy is a free MGE light profile.
 
-    Scaling lens galaxies have mass modeled via a shared luminosity scaling relation.
-    """
-    """
-    __Analysis__
-
-    Positions likelihood guards against catastrophic lens configurations from the start.
+    This search aims to produce an initial joint lens plus source model with a
+    physically motivated mass scaling for companion galaxies.
     """
     analysis = al.AnalysisImaging(
         dataset=dataset,
@@ -402,19 +382,6 @@ def fit(dataset_name, sample_name):
     extra_galaxies = extra_galaxies_fixed
     scaling_galaxies = scaling_galaxies
 
-    """
-    __Model__
-
-    source_lp[1] fits a model where:
-
-     - Every main lens galaxy has light fixed from [0], a free Isothermal mass, and
-       ExternalShear on lens_0 only.
-     - Every extra galaxy has light fixed from [0] and a free Isothermal mass bounded
-       by luminosity.
-     - Every scaling galaxy has light fixed from [0] and mass set by a shared free
-       scaling relation.
-     - The source galaxy is a free MGE light profile.
-    """
     lens_dict = {f"lens_{i}": m for i, m in enumerate(lens_galaxy_models)}
     lens_dict["source"] = af.Model(
         al.Galaxy,
@@ -432,11 +399,6 @@ def fit(dataset_name, sample_name):
     n_scaling = len(scaling_galaxies) if scaling_galaxies is not None else 0
     n_live = 150 + 30 * len(lens_galaxy_models) + 30 * n_extra + 30 * n_scaling
 
-    """
-    __Search__
-
-    n_live scales with number of lenses, extra, and scaling galaxies.
-    """
     search = af.Nautilus(
         name="source_lp[1]",
         **settings_search.search_dict,
@@ -448,17 +410,20 @@ def fit(dataset_name, sample_name):
     source_lp_result_1 = search.fit(model=model, analysis=analysis, **settings_search.fit_dict)
 
     """
-    __SOURCE PIX PIPELINE 1__
+    __Model + Search + Analysis + Model-Fit (Search 3)__
 
-    Introduces a pixelized source reconstruction.  The adapt image is built from
-    the source signal estimated by source_lp[1].
+    Search 3 of the SOURCE PIX PIPELINE fits a lens model where:
 
-    All main lens light profiles are fixed from source_lp[1].  Mass models are
-    free, chained from source_lp[1] with the centre unfixed.  The single
-    ExternalShear (on lens_0) is also kept free.
+     - Every main lens galaxy has light fixed from source_lp[1] and a free Isothermal
+       mass chained from source_lp[1] with unfix_mass_centre=True.
+       ExternalShear is free on lens_0 only.
+     - Extra and scaling galaxies retain the same models as source_lp[1] (fixed light,
+       bounded/scaling mass).
+     - The source galaxy has a free Delaunay pixelization with AdaptSplit regularization,
+       adapted to the source signal estimated by source_lp[1].
 
-    Extra and scaling galaxies are passed in with the same models used in
-    source_lp[1] (fixed light, bounded/scaling mass).
+    This search aims to produce an accurate pixelized source reconstruction with a
+    well-constrained lens mass model.
     """
     hilbert_pixels = al.model_util.hilbert_pixels_from_pixel_scale(pixel_scale)
 
@@ -506,11 +471,6 @@ def fit(dataset_name, sample_name):
         over_sample_size_pixelization=over_sample_size_pixelization,
     )
 
-    """
-    __Analysis__
-
-    Adapt images from source_lp[1]; positions likelihood tightened from source_lp[1] at factor=2.
-    """
     analysis = al.AnalysisImaging(
         dataset=dataset,
         adapt_images=adapt_images,
@@ -556,16 +516,6 @@ def fit(dataset_name, sample_name):
         ),
     )
 
-    """
-    __Model__
-
-    source_pix[1] fits a model where:
-
-     - Every main lens galaxy has light fixed from source_lp[1] and a free Isothermal
-       mass chained with unfix_mass_centre=True; ExternalShear free on lens_0 only.
-     - Extra and scaling galaxies are fixed (light + mass) from source_lp[1].
-     - The source galaxy has a free Delaunay pixelization + AdaptSplit regularization.
-    """
     model = af.Collection(
         galaxies=af.Collection(**lens_dict),
         extra_galaxies=extra_galaxies_fixed,
@@ -574,11 +524,6 @@ def fit(dataset_name, sample_name):
 
     n_live = 150 + 50 * (n_lenses - 1)
 
-    """
-    __Search__
-
-    n_live scales with the number of free mass models (one per main lens).
-    """
     search = af.Nautilus(
         name="source_pix[1]",
         **settings_search.search_dict,
@@ -589,11 +534,18 @@ def fit(dataset_name, sample_name):
     source_pix_result_1 = search.fit(model=model, analysis=analysis, **settings_search.fit_dict)
 
     """
-    __SOURCE PIX PIPELINE 2__
+    __Model + Search + Analysis + Model-Fit (Search 4)__
 
-    Refines the pixelization using a Hilbert image mesh adapted to the source
-    morphology from source_pix[1].  All lens components (light and mass) and
-    extra_galaxies are fully fixed.
+    Search 4 of the SOURCE PIX PIPELINE fits a lens model where:
+
+     - Every main lens galaxy has light fixed from source_lp[1] and mass fixed from
+       source_pix[1].
+     - Extra and scaling galaxies are fully fixed from source_pix[1].
+     - The source galaxy has a free Delaunay pixelization with AdaptSplit regularization,
+       adapted to the source morphology from source_pix[1] via a Hilbert image mesh.
+
+    This search aims to refine the pixelized source reconstruction using a more
+    accurate adapt image derived from the first pixelized fit.
     """
     galaxy_image_name_dict = al.galaxy_name_image_dict_via_result_from(
         result=source_pix_result_1
@@ -641,11 +593,6 @@ def fit(dataset_name, sample_name):
         over_sample_size_pixelization=over_sample_size_pixelization,
     )
 
-    """
-    __Analysis__
-
-    Hilbert adapt images from source_pix[1]; no positions likelihood — everything is fixed.
-    """
     analysis = al.AnalysisImaging(
         dataset=dataset,
         adapt_images=adapt_images,
@@ -676,27 +623,12 @@ def fit(dataset_name, sample_name):
         ),
     )
 
-    """
-    __Model__
-
-    source_pix[2] fits a model where:
-
-     - Every main lens galaxy has light fixed from source_lp[1] and mass fixed from
-       source_pix[1].
-     - Extra and scaling galaxies are fully fixed from source_pix[1].
-     - The source galaxy has a free Delaunay pixelization + AdaptSplit regularization.
-    """
     model = af.Collection(
         galaxies=af.Collection(**lens_dict),
         extra_galaxies=source_pix_result_1.instance.extra_galaxies,
         scaling_galaxies=source_pix_result_1.instance.scaling_galaxies,
     )
 
-    """
-    __Search__
-
-    Fixed n_live=75; only the pixelization mesh and regularization are free.
-    """
     search = af.Nautilus(
         name="source_pix[2]",
         **settings_search.search_dict,
@@ -707,22 +639,19 @@ def fit(dataset_name, sample_name):
     source_pix_result_2 = search.fit(model=model, analysis=analysis, **settings_search.fit_dict)
 
     """
-    __LIGHT LP PIPELINE__
+    __Model + Search + Analysis + Model-Fit (Search 5)__
 
-    Fits free MGE light profiles for every main lens galaxy simultaneously while
-    holding the mass models (from source_pix[2]) and source (pixelized, fixed) in
-    place.  Extra and scaling galaxies are fully fixed (light + mass) from the
-    source_pix[2] result.
+    Search 5 of the LIGHT LP PIPELINE fits a lens model where:
 
-    The same MGE setup used in source_lp[0] is used here — one per main lens,
-    centred on the stage-0 bulge centre.  This gives a flexible, high-dynamic-range
-    light model that can properly separate lens from source once the mass model is
-    well-constrained.
-    """
-    """
-    __Analysis__
+     - Every main lens galaxy has a free MGE bulge light profile; mass and shear are
+       fixed from source_pix[1].
+     - Extra galaxies have a free MGE bulge light profile and mass fixed from
+       source_pix[1].
+     - Scaling galaxies are fully fixed (light + mass) from source_pix[2].
+     - The source is fixed (pixelized) from source_pix[2].
 
-    Hilbert adapt images from source_pix[2]; no positions likelihood.
+    This search aims to accurately model the lens galaxy light once the mass model
+    and source are well constrained by the pixelized source pipeline.
     """
     analysis = al.AnalysisImaging(
         dataset=dataset,
@@ -779,17 +708,6 @@ def fit(dataset_name, sample_name):
 
     lens_dict["source"] = source
 
-    """
-    __Model__
-
-    light[1] fits a model where:
-
-     - Every main lens galaxy has a free MGE bulge; mass and shear fixed from
-       source_pix[1].
-     - Extra galaxies have a free MGE bulge and mass fixed from source_pix[1].
-     - Scaling galaxies are fully fixed from source_pix[2].
-     - The source is fixed (pixelized) from source_pix[2].
-    """
     model = af.Collection(
         galaxies=af.Collection(**lens_dict),
         extra_galaxies=extra_galaxies_free,
@@ -798,11 +716,6 @@ def fit(dataset_name, sample_name):
 
     n_live = 300 + 100 * (n_lenses - 1)
 
-    """
-    __Search__
-
-    n_live scales with number of main lenses; light is the only free component.
-    """
     search = af.Nautilus(
         name="light[1]",
         **settings_search.search_dict,
@@ -813,17 +726,21 @@ def fit(dataset_name, sample_name):
     light_result = search.fit(model=model, analysis=analysis, **settings_search.fit_dict)
 
     """
-    __MASS TOTAL PIPELINE__
+    __Model + Search + Analysis + Model-Fit (Search 6)__
 
-    Fits a PowerLaw total mass distribution for every main lens simultaneously.
-    Mass priors are chained from source_pix[1].  Light is fixed from light[1].
-    Source is fixed from source_pix[2].
+    Search 6 of the MASS TOTAL PIPELINE fits a lens model where:
 
-    Extra galaxies: light fixed from light[1], mass free (Isothermal, centre
-    fixed to bulge centre, einstein_radius bounded by luminosity).
+     - Every main lens galaxy has light fixed from light[1] and a free PowerLaw total
+       mass distribution with priors chained from source_pix[1].
+       ExternalShear is free on lens_0 only.
+     - Extra galaxies have light fixed from light[1] and a free Isothermal mass bounded
+       by the light[1] luminosity.
+     - Scaling galaxies have light fixed from light[1] and mass set by a shared free
+       luminosity scaling relation.
+     - The source is fixed (pixelized) from source_pix[2].
 
-    Scaling galaxies: light fixed from light[1], mass driven by a shared free
-    scaling relation (scaling_factor and scaling_relation both free).
+    This search aims to accurately estimate the total mass distribution of every main
+    lens galaxy, using the improved source and light models from preceding stages.
     """
     # --- extra galaxies: fixed light, free mass ---
     extra_lens_mass_free_list = []
@@ -886,11 +803,6 @@ def fit(dataset_name, sample_name):
         af.Collection(scaling_mass_free_list) if scaling_mass_free_list else None
     )
 
-    """
-    __Analysis__
-
-    Adapt images from source_pix[2]; positions likelihood from light[1] at factor=3.
-    """
     analysis = al.AnalysisImaging(
         dataset=dataset,
         adapt_images=adapt_images,
@@ -901,19 +813,6 @@ def fit(dataset_name, sample_name):
         ],
     )
 
-    """
-    __Model__
-
-    mass_total[1] fits a model where:
-
-     - Every main lens galaxy has light fixed from light[1] and a free PowerLaw mass
-       with priors chained from source_pix[1]; ExternalShear free on lens_0 only.
-     - Extra galaxies have light fixed from light[1] and a free Isothermal mass
-       bounded by luminosity.
-     - Scaling galaxies have light fixed from light[1] and mass set by a shared free
-       scaling relation.
-     - The source is fixed (pixelized) from source_pix[2].
-    """
     source = al.util.chaining.source_from(result=source_pix_result_2)
 
     lens_dict = {}
@@ -947,11 +846,6 @@ def fit(dataset_name, sample_name):
 
     n_live = 200 + 100 * (n_lenses - 1)
 
-    """
-    __Search__
-
-    n_live scales with number of main lenses; PowerLaw replaces Isothermal from source pipeline.
-    """
     search = af.Nautilus(
         name="mass_total[1]",
         **settings_search.search_dict,
