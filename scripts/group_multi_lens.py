@@ -25,6 +25,7 @@ source_lp[1]  run_group     — full LP fit, mass + source introduced
 Subsequent stages (source_pix, light_lp, mass_total) will be added once the
 group variants of those pipeline functions are implemented.
 """
+
 import numpy as np
 import sys
 import json
@@ -35,9 +36,11 @@ def _load_centres(path):
     """Load a centres JSON file, returning an empty list if the file is absent."""
     try:
         import autolens as al
+
         return al.Grid2DIrregular(al.from_json(file_path=path))
     except FileNotFoundError:
         import autolens as al
+
         return al.Grid2DIrregular([])
 
 
@@ -184,7 +187,9 @@ def fit(dataset_name, sample_name):
             centre_sigma=0.1,
         )
         lens_light_models.append(
-            af.Model(al.Galaxy, redshift=redshift_lens, bulge=bulge, disk=None, point=None)
+            af.Model(
+                al.Galaxy, redshift=redshift_lens, bulge=bulge, disk=None, point=None
+            )
         )
 
     # --- extra lens galaxy light models ---
@@ -248,9 +253,7 @@ def fit(dataset_name, sample_name):
     """
     analysis = al.AnalysisImaging(
         dataset=dataset,
-        positions_likelihood_list=[
-            al.PositionsLH(positions=positions, threshold=0.3)
-        ],
+        positions_likelihood_list=[al.PositionsLH(positions=positions, threshold=0.3)],
     )
 
     source_bulge = al.model_util.mge_model_from(
@@ -292,8 +295,7 @@ def fit(dataset_name, sample_name):
     n_extra = len(extra_lens_centres)
 
     tracer = (
-        source_lp_result_0.max_log_likelihood_fit
-        .tracer_linear_light_profiles_to_light_profiles
+        source_lp_result_0.max_log_likelihood_fit.tracer_linear_light_profiles_to_light_profiles
     )
 
     # --- extra lens galaxy models (light fixed, mass bounded by luminosity) ---
@@ -306,17 +308,19 @@ def fit(dataset_name, sample_name):
         mass.ell_comps = lp0_extra.bulge.ell_comps
 
         luminosity_per_gaussian_list = [
-            2 * np.pi * g.sigma ** 2 / g.axis_ratio() * g.intensity
+            2 * np.pi * g.sigma**2 / g.axis_ratio() * g.intensity
             for g in tracer.galaxies[n_main + i].bulge.profile_list
         ]
-        total_luminosity = np.sum(luminosity_per_gaussian_list) / pixel_scale ** 2
+        total_luminosity = np.sum(luminosity_per_gaussian_list) / pixel_scale**2
         mass.einstein_radius = af.UniformPrior(
             lower_limit=0.0,
-            upper_limit=min(5 * 0.5 * total_luminosity ** 0.6, 5.0),
+            upper_limit=min(5 * 0.5 * total_luminosity**0.6, 5.0),
         )
 
         extra_lens_fixed_list.append(
-            af.Model(al.Galaxy, redshift=redshift_lens, bulge=lp0_extra.bulge, mass=mass)
+            af.Model(
+                al.Galaxy, redshift=redshift_lens, bulge=lp0_extra.bulge, mass=mass
+            )
         )
 
     extra_galaxies_fixed = (
@@ -338,14 +342,16 @@ def fit(dataset_name, sample_name):
         mass.ell_comps = lp0_scaling.bulge.ell_comps
 
         luminosity_per_gaussian_list = [
-            2 * np.pi * g.sigma ** 2 / g.axis_ratio() * g.intensity
+            2 * np.pi * g.sigma**2 / g.axis_ratio() * g.intensity
             for g in tracer.galaxies[n_main + n_extra + i].bulge.profile_list
         ]
-        total_luminosity = np.sum(luminosity_per_gaussian_list) / pixel_scale ** 2
-        mass.einstein_radius = scaling_factor * total_luminosity ** scaling_relation
+        total_luminosity = np.sum(luminosity_per_gaussian_list) / pixel_scale**2
+        mass.einstein_radius = scaling_factor * total_luminosity**scaling_relation
 
         scaling_lens_fixed_list.append(
-            af.Model(al.Galaxy, redshift=redshift_lens, bulge=lp0_scaling.bulge, mass=mass)
+            af.Model(
+                al.Galaxy, redshift=redshift_lens, bulge=lp0_scaling.bulge, mass=mass
+            )
         )
 
     scaling_galaxies = (
@@ -437,7 +443,9 @@ def fit(dataset_name, sample_name):
         source_lp_result=source_lp_result_1,
         extra_galaxies=extra_galaxies_fixed,
         scaling_galaxies=scaling_galaxies,
-        mesh_init=al.mesh.Delaunay(pixels=hilbert_pixels, zeroed_pixels=edge_pixels_total),
+        mesh_init=al.mesh.Delaunay(
+            pixels=hilbert_pixels, zeroed_pixels=edge_pixels_total
+        ),
         regularization_init=af.Model(al.reg.AdaptSplit),
         n_batch=20,
     )
@@ -511,13 +519,58 @@ def fit(dataset_name, sample_name):
     )
 
     """
+    __LIGHT LP PIPELINE__
+
+    Fits free MGE light profiles for every main lens galaxy simultaneously while
+    holding the mass models (from source_pix[2]) and source (pixelized, fixed) in
+    place.  Extra and scaling galaxies are fully fixed (light + mass) from the
+    source_pix[2] result.
+
+    The same MGE setup used in source_lp[0] is used here — one per main lens,
+    centred on the stage-0 bulge centre.  This gives a flexible, high-dynamic-range
+    light model that can properly separate lens from source once the mass model is
+    well-constrained.
+    """
+    analysis = al.AnalysisImaging(dataset=dataset)
+
+    lens_bulge_list = []
+    for i in range(len(main_lens_centres)):
+        lp0_lens = getattr(source_lp_result_0.instance.galaxies, f"lens_{i}")
+        bulge = al.model_util.mge_model_from(
+            mask_radius=mask_radius,
+            total_gaussians=30,
+            gaussian_per_basis=2,
+            centre_prior_is_uniform=False,
+            centre=lp0_lens.bulge.centre,
+            centre_sigma=0.1,
+        )
+        lens_bulge_list.append(bulge)
+
+    light_result = slam_pipeline.light_lp.run_group(
+        settings_search=settings_search,
+        analysis=analysis,
+        source_result_for_lens=source_pix_result_2,
+        source_result_for_source=source_pix_result_2,
+        lens_bulge_list=lens_bulge_list,
+        extra_galaxies=source_pix_result_2.instance.extra_galaxies,
+        scaling_galaxies=source_pix_result_2.instance.scaling_galaxies,
+        n_batch=info.get("n_batch", 20),
+    )
+
+    """
     __SUBSEQUENT STAGES__
 
-    light_lp.run_group and mass_total.run_group will be added here once those
-    pipeline functions are implemented.
+    mass_total.run_group will be added here once that pipeline function is
+    implemented.
     """
 
-    return source_lp_result_0, source_lp_result_1, source_pix_result_1, source_pix_result_2
+    return (
+        source_lp_result_0,
+        source_lp_result_1,
+        source_pix_result_1,
+        source_pix_result_2,
+        light_result,
+    )
 
 
 if __name__ == "__main__":
