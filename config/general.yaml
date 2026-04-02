@@ -1,33 +1,29 @@
-jax:
-  use_jax: true                       # If True, uses JAX internally, whereas False uses normal Numpy.
-analysis:
-  n_cores: 1                        # The number of cores a parallelized sum of Analysis classes uses by default.
+updates:
+  iterations_per_quick_update: 1e99 # Non-linear search iterations between every quick update, which just displays the maximum likelihood model fit.
+  iterations_per_full_update: 1e99  # Non-linear search iterations between every full update, which outputs all visuals and result fits (e.g. model.result, search.summary), this exits the search and can be slow.
 fits:
-  flip_for_ds9: false
+  flip_for_ds9: true
 psf:
   use_fft_default: true              # If True, PSFs are convolved using FFTs by default, which is faster and uses less memory in all cases except for very small PSFs, False uses direct convolution.
 grid:
-  remove_projected_centre: false
   max_evaluation_grid_size: 1000   # An evaluation grid whose shape is adaptive chosen is used to compute quantities like critical curves, this integer is the max size of the grid ensuring faster run times.
 inversion:
   check_reconstruction: true        # If True, the inversion's reconstruction is checked to ensure the solution of a meshs's mapper is not an invalid solution where the values are all the same.
   use_positive_only_solver: true      # If True, inversion's use a positive-only linear algebra solver by default, which is slower but prevents unphysical negative values in the reconstructed solutuion.
   use_edge_zeroed_pixels : true       # If True, the edge pixels of a pixelization are set to zero, which prevents unphysical values in the reconstructed solution at the edge of the pixelization.
   no_regularization_add_to_curvature_diag_value : 1.0e-3 # The default value added to the curvature matrix's diagonal when regularization is not applied to a linear object, which prevents inversion's failing due to the matrix being singular.
-  positive_only_uses_p_initial: true  # If True, the positive-only solver of an inversion's uses an initial guess of the reconstructed data's values as which values should be positive, speeding up the solver.
   use_border_relocator: true          # If True, by default a pixelization's border is used to relocate all pixels outside its border to the border.
   reconstruction_vmax_factor: 0.5   # Plots of an Inversion's reconstruction use the reconstructed data's bright value multiplied by this factor.
 hpc:
   hpc_mode: false                   # If True, use HPC mode, which disables GUI visualization, logging to screen and other settings which are not suited to running on a super computer.
-  iterations_per_quick_update: 5000       # The number of iterations between every update (visualization, results output, etc) in HPC mode.
+  iterations_per_quick_update: 250000 #  Non-linear search iterations between every quick update, which just displays the maximum likelihood model fit.
+  iterations_per_full_update: 1e99  # Non-linear search iterations between every full update, which outputs all visuals and result fits (e.g. model.result, search.summary), this exits the search and can be slow.
 adapt:
   adapt_minimum_percent: 0.01
   adapt_noise_limit: 100000000.0
-model:
-  ignore_prior_limits: false        # If ``True`` the limits applied to priors will be ignored, where limits set upper / lower limits. This stops PriorLimitException's from being raised.
 numba:
   use_numba: true
-  cache: false
+  cache: true
   nopython: true
   parallel: false
 output:
@@ -43,8 +39,6 @@ output:
   unconverged_sample_size : 100     # If outputting results of an unconverged search, the number of samples used to estimate the median PDF values and errors.
 parallel:
   warn_environment_variables: true  # If True, a warning is displayed when the search's number of CPU > 1 and enviromment variables related to threading are also > 1.
-pixelization:
-  voronoi_nn_max_interpolation_neighbors: 300
 profiling:
   parallel_profile: false           # If True, the parallelization of the fit is profiled outputting a cPython graph.
   should_profile: false             # If True, the ``profile_log_likelihood_function()`` function of an analysis class is called throughout a model-fit, profiling run times.
