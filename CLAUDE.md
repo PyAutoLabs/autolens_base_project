@@ -10,15 +10,25 @@ new project from this template, follow the conventions below.
 New projects live outside this repo (e.g. `/mnt/c/Users/Jammy/Results/<project_name>/`).
 Use `rsync` to copy the template, excluding what isn't needed.
 
+The HPC folder contains one submit script per script type (`submit_imaging`,
+`submit_interferometer`, `submit_group`) in both `batch_gpu/` and `batch_cpu/`.
+Use the rsync exclusions below to copy **only** the submit scripts that match
+the chosen SLaM pipeline(s) — exclude everything else.
+
+To run a single dataset as a test, just put one entry in the `datasets=()` array
+in the submit script; no separate template file is needed.
+
 ### Imaging-only project (most common)
 
 ```bash
 rsync -av \
   --exclude='scripts/interferometer.py' \
+  --exclude='scripts/group.py' \
   --exclude='hpc/batch_gpu/submit_interferometer' \
+  --exclude='hpc/batch_gpu/submit_group' \
   --exclude='hpc/batch_gpu/submit' \
   --exclude='hpc/batch_cpu/submit_interferometer' \
-  --exclude='hpc/batch_cpu/template_interferometer' \
+  --exclude='hpc/batch_cpu/submit_group' \
   --exclude='hpc/batch_cpu/submit' \
   --exclude='hpc/batch_cpu/template' \
   --exclude='dataset/' \
@@ -32,18 +42,68 @@ rsync -av \
 
 ### Interferometer-only project
 
-Same rsync but swap the exclusions: exclude `scripts/imaging.py` and the
-`submit_imaging` / `template_imaging` HPC scripts instead.
+```bash
+rsync -av \
+  --exclude='scripts/imaging.py' \
+  --exclude='scripts/group.py' \
+  --exclude='hpc/batch_gpu/submit_imaging' \
+  --exclude='hpc/batch_gpu/submit_group' \
+  --exclude='hpc/batch_gpu/submit' \
+  --exclude='hpc/batch_cpu/submit_imaging' \
+  --exclude='hpc/batch_cpu/submit_group' \
+  --exclude='hpc/batch_cpu/submit' \
+  --exclude='hpc/batch_cpu/template' \
+  --exclude='dataset/' \
+  --exclude='output/' \
+  --exclude='simulators/' \
+  --exclude='__pycache__/' \
+  --exclude='*.pyc' \
+  /mnt/c/Users/Jammy/Code/PyAutoJAX/base_project/ \
+  /path/to/new/project/
+```
 
-### Both data types
+### Group-only project
 
-Omit the script/HPC exclusions entirely.
+```bash
+rsync -av \
+  --exclude='scripts/imaging.py' \
+  --exclude='scripts/interferometer.py' \
+  --exclude='hpc/batch_gpu/submit_imaging' \
+  --exclude='hpc/batch_gpu/submit_interferometer' \
+  --exclude='hpc/batch_gpu/submit' \
+  --exclude='hpc/batch_cpu/submit_imaging' \
+  --exclude='hpc/batch_cpu/submit_interferometer' \
+  --exclude='hpc/batch_cpu/submit' \
+  --exclude='hpc/batch_cpu/template' \
+  --exclude='dataset/' \
+  --exclude='output/' \
+  --exclude='simulators/' \
+  --exclude='__pycache__/' \
+  --exclude='*.pyc' \
+  /mnt/c/Users/Jammy/Code/PyAutoJAX/base_project/ \
+  /path/to/new/project/
+```
+
+### Multiple data types
+
+Omit the exclusions for any script types you need; keep all others.
+Always exclude `submit` and `template` (no suffix) — those are legacy files.
 
 ### What to always exclude
 
 - `dataset/` — add real datasets separately (see below)
 - `output/` — never pre-populate; written by PyAutoFit at runtime
 - `simulators/` — only needed when generating simulated data
+
+## Codex / sandboxed runs
+
+When running Python from Codex or any restricted environment, set writable cache directories so `numba` and `matplotlib` do not fail on unwritable home or source-tree paths:
+
+```bash
+NUMBA_CACHE_DIR=/tmp/numba_cache MPLCONFIGDIR=/tmp/matplotlib python scripts/imaging.py
+```
+
+This workspace is often imported from `/mnt/c/...` and Codex may not be able to write to module `__pycache__` directories or `/home/jammy/.cache`, which can cause import-time `numba` caching failures without this override.
 
 ---
 
@@ -104,16 +164,19 @@ same `mask_radius`.
 
 ## HPC Script Checklist (after copying)
 
-For each new project, update these fields in `hpc/batch_gpu/submit_imaging` and
-`hpc/batch_cpu/submit_imaging`:
+For each script type present in the project (`imaging`, `interferometer`, `group`),
+update these fields in both `hpc/batch_gpu/submit_<type>` and
+`hpc/batch_cpu/submit_<type>`:
 
 1. `#SBATCH -J <job_name>` — descriptive name for the SLURM queue
 2. `#SBATCH --array=0-N` — set N = number of datasets minus 1
 3. `sample=<sample_name>` — matches the subdirectory under `dataset/`
 4. `datasets=(...)` — one dataset name per line, in the same order as the array indices
-5. `hpc/batch_cpu/template_imaging`: update `sample=` and `dataset=` to a real example lens
 
-The GPU submit script also has `nvidia-smi` in the echo block — leave it in place.
+The GPU submit scripts have `nvidia-smi` in the echo block — leave it in place.
+
+To test a single lens, temporarily set `--array=0-0` and put just that lens in
+`datasets=(...)` — no separate template file is needed.
 
 ---
 
@@ -202,18 +265,50 @@ Use the `PyAuto` venv unless the project requires a different one.
 
 ---
 
+## Context (`context/`)
+
+The `context/` folder contains tutorials, examples, and reference material copied from
+`autolens_workspace` that give AI sessions the scientific and technical background needed
+for the project. Its contents are managed manually via prompts — there is no automated
+population step.
+
+When working on this project, read relevant files in `context/` before modifying scripts or
+interpreting results. The folder may contain things like:
+
+- Feature examples (e.g., pixelization, subhalo modeling, multi-Gaussian expansion)
+- Guide scripts explaining API usage or modeling conventions
+- Reference outputs or worked examples relevant to the science case
+
+The `context/` folder is populated per-project — it will be empty in a fresh rsync of the
+template and grows as the project evolves.
+
+---
+
+## Modeling Scripts (`Scripts/`)
+
+The `Scripts/` folder is empty in the base template. After rsync-ing the template into a new
+project, use the `/init-slam` skill to select and copy the appropriate SLaM pipeline script(s)
+from `autolens_workspace`. The skill presents categorized options, copies the chosen script(s),
+and creates `Scripts/slam_claude.md` with full SLaM context for future AI sessions.
+
+The skill is defined at `base_project/skills/init-slam/SKILL.md`. Install it once from there.
+
+See `Scripts/CLAUDE.md` for the full list of available pipeline options.
+
+---
+
 ## Typical New-Project Workflow
 
 1. `rsync` the template (with appropriate exclusions)
-2. Copy or symlink the dataset into `dataset/<sample_name>/`
-3. Verify every lens has an `info.json` with at least `pixel_scale` and `n_batch`
-   (or confirm the defaults in `scripts/imaging.py` are correct for the instrument)
-4. Update `hpc/batch_gpu/submit_imaging` and `hpc/batch_cpu/submit_imaging`:
-   job name, `--array`, `sample=`, `datasets=(...)`
-5. Update `hpc/batch_cpu/template_imaging`: `sample=` and `dataset=`
-6. **Run `dos2unix` on all shell scripts and Python files** to ensure Unix line endings
-7. **Add a `Project<Name>()` function to `~/.bashrc`** (see Bash Project Alias above)
-8. Test locally on one lens before submitting the full array:
+2. **Run `/init-slam`** to select and copy SLaM pipeline script(s) into `Scripts/`
+3. Copy or symlink the dataset into `dataset/<sample_name>/`
+4. Verify every lens has an `info.json` with at least `pixel_scale` and `n_batch`
+   (or confirm the defaults in `Scripts/imaging.py` are correct for the instrument)
+5. Update `hpc/batch_gpu/submit_<type>` and `hpc/batch_cpu/submit_<type>` for each
+   chosen script type: job name, `--array`, `sample=`, `datasets=(...)`
+7. **Run `dos2unix` on all shell scripts and Python files** to ensure Unix line endings
+8. **Add a `Project<Name>()` function to `~/.bashrc`** (see Bash Project Alias above)
+9. Test locally on one lens before submitting the full array:
    ```bash
-   python3 scripts/imaging.py --sample=<sample> --dataset=<one_lens>
+   python3 Scripts/imaging.py --sample=<sample> --dataset=<one_lens>
    ```

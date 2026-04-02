@@ -7,10 +7,31 @@
 #   # sync.conf is gitignored — it stays on your machine only.
 #
 # USAGE (run from the project root or hpc/ directory)
-#   hpc/sync push     Push code and data to the HPC
-#   hpc/sync pull     Download results from the HPC
-#   hpc/sync sync     Push, then pull  (default)
-#   hpc/sync status   Dry run — show what would transfer without moving anything
+#
+# Transfer:
+#   hpc/sync push                    Push code and data to the HPC
+#   hpc/sync push --no-data          Push code only (skip dataset/)
+#   hpc/sync pull                    Download SLURM logs then results from the HPC
+#   hpc/sync logs                    Download SLURM output/error logs only (fast, use mid-run)
+#   hpc/sync sync                    Push, then pull (default)
+#   hpc/sync sync --no-data          Push code only, then pull
+#   hpc/sync push-data-init          First-time dataset upload via tar pipe
+#   hpc/sync pull-full               Full output download via tar pipe
+#   hpc/sync status                  Dry run — show what would transfer
+#
+# Jobs (no manual SSH required):
+#   hpc/sync submit [gpu|cpu] <script>   Submit a SLURM job
+#   hpc/sync push-submit [gpu|cpu] <script>  Push code then submit
+#   hpc/sync jobs                    Show queued/running jobs (squeue)
+#   hpc/sync sacct                   Show job history and exit codes (sacct)
+#   hpc/sync cancel <job_id>         Cancel a job by ID
+#   hpc/sync wait-and-pull [secs]    Poll until all jobs finish, then pull (default: 60s)
+#
+# Inspect:
+#   hpc/sync tail [gpu|cpu]          Stream live SLURM log output (Ctrl+C to stop)
+#   hpc/sync du                      Show remote disk usage
+#   hpc/sync check                   Verify SSH connection and remote paths
+#   hpc/sync clear-logs [gpu|cpu]    Delete SLURM output/error log files
 
 set -euo pipefail
 
@@ -45,17 +66,30 @@ ROOT_FILES=(activate.sh util.py __init__.py README.rst LICENSE)
 # the entire archive on every sync (critical for large datasets).
 DATA_DIRS=(dataset)
 
+# SLURM stdout/stderr logs — pulled first; small files, fast to inspect mid-run.
+LOG_DIRS=(
+    hpc/batch_gpu/output
+    hpc/batch_gpu/error
+    hpc/batch_cpu/output
+    hpc/batch_cpu/error
+)
+
 # Pulled from the HPC after jobs finish.
 PULL_DIRS=(output)
 
 # ---------------------------------------------------------------------------
 # rsync options
-#   -a          archive (timestamps, permissions, symlinks)
-#   -z          compress in transit (big win for text/JSON/YAML; minimal for FITS)
-#   --partial   keep partial files so interrupted transfers resume rather than restart
-#   --info=progress2  single updating line per file (less noisy than -v)
+#   -a                    archive (timestamps, permissions, symlinks)
+#   -z                    compress in transit (big win for text/JSON/YAML)
+#   --skip-compress       skip compression for formats that don't benefit
+#   --partial             keep partial files so interrupted transfers resume
+#   --info=progress2      single updating line per file (less noisy than -v)
+#   -e / ControlMaster    reuse a single SSH connection across all rsync calls;
+#                         avoids a fresh TLS handshake for every directory loop
 # ---------------------------------------------------------------------------
-RSYNC=(rsync -az --partial --info=progress2)
+RSYNC=(rsync -az --partial --info=progress2
+    --skip-compress=fits/gz/bz2/xz/zst
+    -e "ssh -o ControlMaster=auto -o ControlPath=/tmp/ssh_mux_%h_%p_%r -o ControlPersist=120")
 
 EXCLUDES=(
     --exclude='__pycache__/'
@@ -78,8 +112,9 @@ push() {
         fi
         echo "    ${dir}/"
         "${RSYNC[@]}" "${EXCLUDES[@]}" ${dryrun} \
-            "${src}" "${REMOTE}/${dir}/"
+            "${src}" "${REMOTE}/${dir}/" &
     done
+    wait
 
     echo "    [root files]"
     local existing_root_files=()
@@ -91,23 +126,73 @@ push() {
             "${existing_root_files[@]}" "${REMOTE}/"
     fi
 
+    if [[ -z "${SKIP_DATA:-}" ]]; then
+        echo ""
+        echo "==> [push] data  →  ${REMOTE}  (--ignore-existing: skips files already on HPC)"
+        for dir in "${DATA_DIRS[@]}"; do
+            local src="${PROJECT_ROOT}/${dir}/"
+            if [[ ! -d "$src" ]]; then
+                echo "    skip: ${dir}/ not found locally"
+                continue
+            fi
+            echo "    ${dir}/"
+            "${RSYNC[@]}" "${EXCLUDES[@]}" --ignore-existing ${dryrun} \
+                "${src}" "${REMOTE}/${dir}/" &
+        done
+        wait
+    else
+        echo ""
+        echo "    [data skipped — --no-data]"
+    fi
+}
+
+push_data_init() {
+    echo "==> [push-data-init] first-time dataset upload via tar pipe  →  ${REMOTE}"
+    echo "    Use this once for a fresh HPC destination."
+    echo "    For subsequent syncs, 'push' (rsync --ignore-existing) is faster."
     echo ""
-    echo "==> [push] data  →  ${REMOTE}  (--ignore-existing: skips files already on HPC)"
+
     for dir in "${DATA_DIRS[@]}"; do
         local src="${PROJECT_ROOT}/${dir}/"
         if [[ ! -d "$src" ]]; then
             echo "    skip: ${dir}/ not found locally"
             continue
         fi
-        echo "    ${dir}/"
-        "${RSYNC[@]}" "${EXCLUDES[@]}" --ignore-existing ${dryrun} \
-            "${src}" "${REMOTE}/${dir}/"
+        local file_count size
+        file_count=$(find "$src" -type f | wc -l)
+        size=$(du -sh "$src" | cut -f1)
+        echo "    ${dir}/  (${file_count} files, ${size})"
+        # No compression: FITS files are binary and don't compress meaningfully.
+        # tar streams directly into ssh, so no temporary archive is created locally.
+        tar cf - -C "${PROJECT_ROOT}" "${dir}" | \
+            ssh "${HPC_HOST}" "mkdir -p '${HPC_BASE}/${PROJECT_NAME}' && tar xf - -C '${HPC_BASE}/${PROJECT_NAME}/'"
     done
+}
+
+pull_logs() {
+    local dryrun="${1:-}"
+
+    echo "<== [logs] SLURM output/error logs  ←  ${REMOTE}"
+    for dir in "${LOG_DIRS[@]}"; do
+        local remote_dir="${REMOTE}/${dir}/"
+        local local_dir="${PROJECT_ROOT}/${dir}/"
+        # Remote log dirs may not exist yet if no jobs have run
+        if [[ -z "$dryrun" ]]; then
+            ssh "${HPC_HOST}" "mkdir -p '${HPC_BASE}/${PROJECT_NAME}/${dir}'" 2>/dev/null || true
+        fi
+        mkdir -p "$local_dir"
+        echo "    ${dir}/"
+        "${RSYNC[@]}" "${EXCLUDES[@]}" --update ${dryrun} \
+            "${remote_dir}" "${local_dir}" &
+    done
+    wait
 }
 
 pull() {
     local dryrun="${1:-}"
 
+    pull_logs "${dryrun}"
+    echo ""
     echo "<== [pull] results  ←  ${REMOTE}"
     for dir in "${PULL_DIRS[@]}"; do
         echo "    ${dir}/"
@@ -123,7 +208,32 @@ pull() {
             --exclude='search_internal' \
             ${dryrun} \
             "${REMOTE}/${dir}/" \
-            "${PROJECT_ROOT}/${dir}/"
+            "${PROJECT_ROOT}/${dir}/" &
+    done
+    wait
+}
+
+pull_full() {
+    echo "<== [pull-full] full output download via tar pipe  ←  ${REMOTE}"
+    echo "    Downloads all of output/ in one stream — avoids per-file rsync overhead."
+    echo "    For incremental pulls as jobs finish, use 'pull' instead."
+    echo ""
+
+    for dir in "${PULL_DIRS[@]}"; do
+        echo "    ${dir}/"
+        mkdir -p "${PROJECT_ROOT}/${dir}"
+        # search_internal excluded — large sampler state, not needed locally
+        if command -v pv &>/dev/null; then
+            ssh "${HPC_HOST}" \
+                "tar cf - --exclude='search_internal' -C '${HPC_BASE}/${PROJECT_NAME}' '${dir}'" | \
+                pv -r -t -b | \
+                tar xf - -C "${PROJECT_ROOT}/"
+        else
+            echo "    (no live rate — install pv for progress: sudo apt install pv)"
+            ssh "${HPC_HOST}" \
+                "tar cf - --exclude='search_internal' -C '${HPC_BASE}/${PROJECT_NAME}' '${dir}'" | \
+                tar xf - -C "${PROJECT_ROOT}/"
+        fi
     done
 }
 
@@ -138,7 +248,263 @@ status() {
 }
 
 # ---------------------------------------------------------------------------
+# Job commands
+# ---------------------------------------------------------------------------
+
+submit() {
+    local batch_type="${1:-}"
+    local script_name="${2:-}"
+
+    if [[ -z "$batch_type" || -z "$script_name" ]]; then
+        echo "Usage: $(basename "$0") submit [gpu|cpu] <script_name>"
+        echo "  e.g. hpc/sync submit gpu submit_imaging"
+        exit 1
+    fi
+    if [[ "$batch_type" != "gpu" && "$batch_type" != "cpu" ]]; then
+        echo "ERROR: batch type must be 'gpu' or 'cpu', got: ${batch_type}"
+        exit 1
+    fi
+
+    local remote_dir="${HPC_BASE}/${PROJECT_NAME}/hpc/batch_${batch_type}"
+    echo "==> [submit] sbatch ${script_name}  (batch_${batch_type})  @  ${HPC_HOST}"
+    echo ""
+    ssh "${HPC_HOST}" "cd '${remote_dir}' && sbatch '${script_name}'"
+}
+
+push_submit() {
+    local batch_type="${1:-}"
+    local script_name="${2:-}"
+
+    if [[ -z "$batch_type" || -z "$script_name" ]]; then
+        echo "Usage: $(basename "$0") push-submit [gpu|cpu] <script_name>"
+        echo "  e.g. hpc/sync push-submit gpu submit_imaging"
+        exit 1
+    fi
+
+    push
+    echo ""
+    submit "$batch_type" "$script_name"
+}
+
+jobs_cmd() {
+    echo "==> [jobs] SLURM queue  @  ${HPC_HOST}"
+    echo ""
+    ssh "${HPC_HOST}" "squeue --me 2>/dev/null || squeue -u \"\$(id -un)\""
+}
+
+sacct_cmd() {
+    echo "==> [sacct] SLURM accounting  @  ${HPC_HOST}"
+    echo ""
+    ssh "${HPC_HOST}" "sacct -u \"\$(id -un)\""
+}
+
+cancel() {
+    local job_id="${1:-}"
+    if [[ -z "$job_id" ]]; then
+        echo "Usage: $(basename "$0") cancel <job_id>"
+        exit 1
+    fi
+    echo "==> [cancel] scancel ${job_id}  @  ${HPC_HOST}"
+    ssh "${HPC_HOST}" "scancel '${job_id}'"
+    echo "    Job ${job_id} cancelled."
+}
+
+wait_and_pull() {
+    local interval="${1:-60}"
+    echo "==> [wait-and-pull] polling every ${interval}s until no jobs remain  @  ${HPC_HOST}"
+    echo "    Ctrl+C to abort."
+    echo ""
+    while true; do
+        local n_running
+        n_running=$(ssh "${HPC_HOST}" "squeue --me --noheader 2>/dev/null | wc -l" 2>/dev/null || echo "0")
+        n_running="${n_running//[[:space:]]/}"
+        if [[ "${n_running}" -eq 0 ]]; then
+            echo "    $(date '+%H:%M:%S')  No jobs running — pulling results..."
+            echo ""
+            pull
+            break
+        else
+            echo "    $(date '+%H:%M:%S')  ${n_running} job(s) still running — next check in ${interval}s"
+            sleep "${interval}"
+        fi
+    done
+}
+
+# ---------------------------------------------------------------------------
+# Inspect commands
+# ---------------------------------------------------------------------------
+
+tail_logs() {
+    local batch_type="${1:-gpu}"
+    if [[ "$batch_type" != "gpu" && "$batch_type" != "cpu" ]]; then
+        echo "ERROR: batch type must be 'gpu' or 'cpu', got: ${batch_type}"
+        exit 1
+    fi
+    local log_dir="${HPC_BASE}/${PROJECT_NAME}/hpc/batch_${batch_type}/output"
+    echo "<== [tail] streaming batch_${batch_type} logs  ←  ${HPC_HOST}"
+    echo "    Ctrl+C to stop."
+    echo ""
+    # -t allocates a TTY so Ctrl+C reaches tail rather than being swallowed by SSH
+    ssh -t "${HPC_HOST}" "
+        shopt -s nullglob
+        files=(\"${log_dir}\"/*.out)
+        if [[ \${#files[@]} -eq 0 ]]; then
+            echo 'No .out files yet in ${log_dir}/'
+        else
+            tail -f \"\${files[@]}\"
+        fi
+    "
+}
+
+du_cmd() {
+    local remote="${HPC_BASE}/${PROJECT_NAME}"
+    echo "==> [du] remote disk usage  @  ${HPC_HOST}:${remote}"
+    echo ""
+    ssh "${HPC_HOST}" "
+        for d in dataset output; do
+            path='${remote}'/\"\$d\"
+            if [[ -d \"\$path\" ]]; then
+                size=\$(du -sh \"\$path\" 2>/dev/null | cut -f1)
+                printf '    %-10s  %s/\n' \"\$size\" \"\$d\"
+            else
+                printf '    %-10s  %s/\n' '-' \"\$d (not found)\"
+            fi
+        done
+        total=\$(du -sh '${remote}' 2>/dev/null | cut -f1)
+        printf '    %-10s  %s\n' \"\$total\" 'total'
+        echo ''
+        df -h '${remote}' 2>/dev/null | tail -1 | \
+            awk '{printf \"    filesystem: %s used of %s (%s free)\n\", \$3, \$2, \$4}'
+    "
+}
+
+check_cmd() {
+    local remote="${HPC_BASE}/${PROJECT_NAME}"
+    echo "==> [check] verifying connection and remote setup  @  ${HPC_HOST}"
+    echo ""
+
+    local all_ok=1
+
+    printf "    SSH connection ............ "
+    if ssh "${HPC_HOST}" "exit 0" 2>/dev/null; then
+        echo "OK"
+    else
+        echo "FAILED"; all_ok=0
+    fi
+
+    printf "    Remote project dir ........ "
+    if ssh "${HPC_HOST}" "[[ -d '${remote}' ]]" 2>/dev/null; then
+        echo "OK  (${remote})"
+    else
+        echo "NOT FOUND  (${remote})"; all_ok=0
+    fi
+
+    printf "    sbatch available .......... "
+    if ssh "${HPC_HOST}" "command -v sbatch &>/dev/null" 2>/dev/null; then
+        echo "OK"
+    else
+        echo "NOT FOUND"; all_ok=0
+    fi
+
+    echo ""
+    echo "    Filesystem:"
+    ssh "${HPC_HOST}" "df -h '${HPC_BASE}' 2>/dev/null | tail -1 | \
+        awk '{printf \"    %s used of %s (%s free) on %s\n\", \$3, \$2, \$4, \$1}'" || true
+
+    echo ""
+    if [[ "$all_ok" -eq 1 ]]; then
+        echo "    All checks passed."
+    else
+        echo "    One or more checks FAILED — review above."
+        return 1
+    fi
+}
+
+clear_logs() {
+    local batch_type="${1:-}"
+
+    local types=("gpu" "cpu")
+    if [[ -n "$batch_type" ]]; then
+        if [[ "$batch_type" != "gpu" && "$batch_type" != "cpu" ]]; then
+            echo "ERROR: batch type must be 'gpu' or 'cpu', got: ${batch_type}"
+            exit 1
+        fi
+        types=("$batch_type")
+    fi
+
+    echo "==> [clear-logs] will delete .out and .err files"
+    echo ""
+    for type in "${types[@]}"; do
+        for subdir in output error; do
+            echo "    local   hpc/batch_${type}/${subdir}/"
+            echo "    remote  hpc/batch_${type}/${subdir}/"
+        done
+    done
+    echo ""
+    read -r -p "    Delete all the above? [y/N] " confirm
+    [[ "$confirm" =~ ^[Yy]$ ]] || { echo "    Aborted."; return 0; }
+    echo ""
+
+    for type in "${types[@]}"; do
+        for subdir in output error; do
+            local local_dir="${PROJECT_ROOT}/hpc/batch_${type}/${subdir}"
+            local remote_dir="${HPC_BASE}/${PROJECT_NAME}/hpc/batch_${type}/${subdir}"
+
+            # Local — only if files exist
+            if compgen -G "${local_dir}/*.out" > /dev/null 2>&1 || \
+               compgen -G "${local_dir}/*.err" > /dev/null 2>&1; then
+                rm -f "${local_dir}"/*.out "${local_dir}"/*.err
+                echo "    cleared local   hpc/batch_${type}/${subdir}/"
+            fi
+
+            # Remote
+            ssh "${HPC_HOST}" "
+                shopt -s nullglob
+                files=('${remote_dir}'/*.out '${remote_dir}'/*.err)
+                if [[ \${#files[@]} -gt 0 ]]; then
+                    rm -f \"\${files[@]}\"
+                    echo '    cleared remote  hpc/batch_${type}/${subdir}/'
+                fi
+            " || true
+        done
+    done
+    echo ""
+    echo "    Done."
+}
+
+print_help() {
+    echo "Usage: $(basename "$0") <command> [options]"
+    echo ""
+    echo "Transfer:"
+    echo "  push                         Upload code, config, and data to the HPC"
+    echo "  push --no-data               Upload code only"
+    echo "  pull                         Download SLURM logs then results"
+    echo "  logs                         Download SLURM logs only (fast, use mid-run)"
+    echo "  sync                         push then pull (default)"
+    echo "  push-data-init               First-time dataset upload via tar pipe"
+    echo "  pull-full                    Full output download via tar pipe"
+    echo "  status                       Dry run — show what would transfer"
+    echo ""
+    echo "Jobs:"
+    echo "  submit [gpu|cpu] <script>    Submit a SLURM job"
+    echo "  push-submit [gpu|cpu] <script>  Push code then submit"
+    echo "  jobs                         Show queued/running jobs (squeue)"
+    echo "  sacct                        Show job history and exit codes"
+    echo "  cancel <job_id>              Cancel a job by ID"
+    echo "  wait-and-pull [secs]         Poll until all jobs finish, then pull (default: 60s)"
+    echo ""
+    echo "Inspect:"
+    echo "  tail [gpu|cpu]               Stream live SLURM log output (default: gpu)"
+    echo "  du                           Show remote disk usage"
+    echo "  check                        Verify SSH connection and remote paths"
+    echo "  clear-logs [gpu|cpu]         Delete SLURM output/error log files"
+    echo ""
+    echo "  help                         Show this message"
+}
+
+# ---------------------------------------------------------------------------
 cmd="${1:-sync}"
+[[ "${2:-}" == "--no-data" ]] && SKIP_DATA=1
 
 echo ""
 echo "Project : ${PROJECT_NAME}"
@@ -146,19 +512,25 @@ echo "Remote  : ${REMOTE}"
 echo ""
 
 case "$cmd" in
-    push)   push ;;
-    pull)   pull ;;
-    sync)   push && echo "" && pull ;;
-    status) status ;;
-    *)
-        echo "Usage: $(basename "$0") [push|pull|sync|status]"
-        echo ""
-        echo "  push    Upload code, config, and data to the HPC"
-        echo "  pull    Download results from the HPC"
-        echo "  sync    push then pull (default)"
-        echo "  status  Dry run — show what would be transferred"
-        exit 1
-        ;;
+    push)            push ;;
+    pull)            pull ;;
+    logs)            pull_logs ;;
+    sync)            push && echo "" && pull ;;
+    push-data-init)  push_data_init ;;
+    pull-full)       pull_full ;;
+    status)          status ;;
+    submit)          submit "${2:-}" "${3:-}" ;;
+    push-submit)     push_submit "${2:-}" "${3:-}" ;;
+    jobs)            jobs_cmd ;;
+    sacct)           sacct_cmd ;;
+    cancel)          cancel "${2:-}" ;;
+    wait-and-pull)   wait_and_pull "${2:-60}" ;;
+    tail)            tail_logs "${2:-gpu}" ;;
+    du)              du_cmd ;;
+    check)           check_cmd ;;
+    clear-logs)      clear_logs "${2:-}" ;;
+    help)            print_help; exit 0 ;;
+    *)               print_help; exit 1 ;;
 esac
 
 echo ""
