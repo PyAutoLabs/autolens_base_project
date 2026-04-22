@@ -100,8 +100,6 @@ from pathlib import Path
 import autofit as af
 import autolens as al
 import autolens.plot as aplt
-import autoconf
-print(autoconf.conf.instance.paths)
 
 
 def _load_centres(path):
