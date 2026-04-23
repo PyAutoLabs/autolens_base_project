@@ -928,9 +928,33 @@ all_galaxy_centres = al.Grid2DIrregular(
 
 positions = al.Grid2DIrregular(al.from_json(file_path=dataset_path / "positions.json"))
 
+dist_galaxies = np.sqrt(all_galaxy_centres[:,0]**2 + all_galaxy_centres[:,1]**2)
+
+
 """
 __Mask__
 """
+# Set up a larger mask for the parts where luminosity profiles for the extra galaxies / scaling galaxies are fitted
+mask_radius_larger = max(mask_radius, dist_galaxies.max() + 0.5)
+
+mask_larger = al.Mask2D.circular(
+    shape_native=dataset.shape_native,
+    pixel_scales=dataset.pixel_scales,
+    radius=mask_radius_larger,
+    centre=mask_centre,
+)
+
+dataset_larger = dataset.apply_mask(mask=mask_larger)
+
+over_sample_size_larger = al.util.over_sample.over_sample_size_via_radial_bins_from(
+    grid=dataset_larger.grid,
+    sub_size_list=[4, 2, 1],
+    radial_list=[0.1, 0.3],
+    centre_list=list(all_galaxy_centres),
+)
+
+dataset_larger = dataset_larger.apply_over_sampling(over_sample_size_lp=over_sample_size_larger)
+
 mask = al.Mask2D.circular(
     shape_native=dataset.shape_native,
     pixel_scales=dataset.pixel_scales,
@@ -949,6 +973,7 @@ over_sample_size = al.util.over_sample.over_sample_size_via_radial_bins_from(
 
 dataset = dataset.apply_over_sampling(over_sample_size_lp=over_sample_size)
 
+
 """
 __Settings AutoFit__
 
@@ -965,12 +990,12 @@ settings_search = af.SettingsSearch(
 __SLaM Pipeline__
 """
 source_lp_result_0 = source_lp_0(
-    dataset=dataset,
+    dataset=dataset_larger,
     settings_search=settings_search,
     main_lens_centres=main_lens_centres,
     extra_lens_centres=extra_lens_centres,
     scaling_lens_centres=scaling_lens_centres,
-    mask_radius=mask_radius,
+    mask_radius=mask_radius_larger,
     redshift_lens=redshift_lens,
 )
 
@@ -1010,13 +1035,13 @@ source_pix_result_2, dataset, adapt_images = source_pix_2(
 )
 
 light_result = light_lp(
-    dataset=dataset,
+    dataset=dataset_larger,
     settings_search=settings_search,
     source_lp_result_0=source_lp_result_0,
     source_pix_result_1=source_pix_result_1,
     source_pix_result_2=source_pix_result_2,
     adapt_images=adapt_images,
-    mask_radius=mask_radius,
+    mask_radius=mask_radius_larger,
     redshift_lens=redshift_lens,
     n_batch=n_batch,
 )
