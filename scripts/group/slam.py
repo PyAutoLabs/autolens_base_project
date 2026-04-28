@@ -100,6 +100,48 @@ from pathlib import Path
 import autofit as af
 import autolens as al
 import autolens.plot as aplt
+from astropy.io import fits
+
+def dataset_instrument_hdu_dict_via_fits_from(
+    dataset_path, dataset_fits_name, image_tag: str = "_FLUX"
+):
+    """
+    Load a dictionary mapping dataset instruments (e.g. DES_g, NIR_Y) to their index in a multi-extension
+    fits file.
+
+    Parameters
+    ----------
+    dataset_path
+        The path where the multi-extension fits file is stored.
+    dataset_fits_name
+        The name of the multi-extension fits file.
+    image_tag
+        The tag appended to the instrument name of the image HDU, e.g. _FLUX, _IMAGE, which is used to pick
+        out the image HDUs from the fits file and ignore other HDUs like noise maps or PSFs.
+
+    Returns
+    -------
+    A dictionary mapping dataset names to their index in the fits file.
+    """
+    hdu_list = fits.open(dataset_path / dataset_fits_name)
+
+    # Build dictionary: {name: index}
+    hdu_dict = {}
+    for i, hdu in enumerate(hdu_list):
+        name = hdu.name if hdu.name else ("PRIMARY" if i == 0 else f"UNNAMED_{i}")
+        hdu_dict[name] = i
+
+    instrument_dict = {}
+    counter = 0
+
+    for hdu in hdu_list:
+        name = hdu.name
+        if name.endswith(image_tag):
+            band = name.replace(image_tag, "").lower()
+            instrument_dict[band] = counter
+            counter += 1
+
+    return instrument_dict
 
 
 def _load_centres(path):
@@ -144,7 +186,8 @@ def source_lp_0(
             centre_prior_is_uniform=False,
             centre=(centre[0], centre[1]),
             centre_sigma=0.1,
-            ell_comps_prior_is_uniform=False,
+            ell_comps_prior_is_uniform=True,
+            ell_comps_uniform_width=0.5,
         )
         lens_dict[f"lens_{i}"] = af.Model(
             al.Galaxy, redshift=redshift_lens, bulge=bulge, disk=None, point=None
@@ -159,7 +202,8 @@ def source_lp_0(
             centre_prior_is_uniform=False,
             centre=(centre[0], centre[1]),
             centre_sigma=0.1,
-            ell_comps_prior_is_uniform=False,
+            ell_comps_prior_is_uniform=True,
+            ell_comps_uniform_width=0.5,
         )
         extra_light_models.append(
             af.Model(al.Galaxy, redshift=redshift_lens, bulge=bulge)
@@ -176,6 +220,7 @@ def source_lp_0(
             centre_prior_is_uniform=True,
             centre=(centre[0], centre[1]),
             ell_comps_prior_is_uniform=True,
+            ell_comps_uniform_width=0.5,
         )
         scaling_light_models.append(
             af.Model(al.Galaxy, redshift=redshift_lens, bulge=bulge)
@@ -200,7 +245,7 @@ def source_lp_0(
         **settings_search.search_dict,
         n_live=n_live,
         n_batch=n_batch,
-        n_like_max=250000,
+        n_like_max=100000,
     )
 
     return search.fit(model=model, analysis=analysis, **settings_search.fit_dict)
@@ -872,7 +917,7 @@ __Dataset__
 
 Load, plot and mask the `Imaging` data.
 """
-dataset_name = "102019596_NEG637748088500119037"
+dataset_name = "102021990_NEG650312660474055399"
 dataset_path = Path("dataset") / "sample_group" / dataset_name
 
 """
@@ -891,12 +936,32 @@ simulator script. This ensures that all example scripts can be run without manua
 #     )
 
 pixel_scale = 0.1
-mask_radius = 3.0
+mask_radius = 3.5
 mask_centre = (0.0, 0.0)
 redshift_lens = 0.5
 redshift_source = 1.0
 source_mge_radius = 1.0
 n_batch = 20
+
+
+dataset_index_dict = dataset_instrument_hdu_dict_via_fits_from(
+    dataset_path=dataset_path,
+    dataset_fits_name="data.fits",
+    image_tag="_FLUX",
+)
+
+vis_index = dataset_index_dict["vis"]
+
+# dataset = al.Imaging.from_fits(
+#     data_path=dataset_path / "data.fits",
+#     data_hdu=vis_index * 3 + 1,
+#     noise_map_path=dataset_path / "data.fits",
+#     noise_map_hdu=vis_index * 3 + 3,
+#     psf_path=dataset_path / "data.fits",
+#     psf_hdu=vis_index * 3 + 2,
+#     pixel_scales=pixel_scale,
+#     check_noise_map=False,
+# )
 
 dataset = al.Imaging.from_fits(
     data_path=dataset_path / "data.fits",
@@ -904,6 +969,7 @@ dataset = al.Imaging.from_fits(
     noise_map_path=dataset_path / "noise_map.fits",
     pixel_scales=pixel_scale,
 )
+
 
 #aplt.subplot_imaging_dataset(dataset=dataset)
 
