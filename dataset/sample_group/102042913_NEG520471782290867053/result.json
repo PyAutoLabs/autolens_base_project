@@ -1,0 +1,11 @@
+{
+    "einstein_radius_max_lh": 0.8423964871193016,
+    "einstein_radius_median_pdf": 0.8484163955026458,
+    "einstein_radius_lower_3_sigma": 0.8189026860499883,
+    "einstein_radius_upper_3_sigma": 0.9518648187405816,
+    "vis_total_lens_flux": 184.97687424966696,
+    "vis_total_lensed_source_flux": 4.174222773035025,
+    "vis_total_source_flux": 5.51559269280813,
+    "vis_magnification": 2.198084928413274,
+    "vis_max_lensed_source_signal_to_noise_ratio": 8.739295150275755
+}

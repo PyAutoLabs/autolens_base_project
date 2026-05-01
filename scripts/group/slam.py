@@ -917,7 +917,7 @@ __Dataset__
 
 Load, plot and mask the `Imaging` data.
 """
-dataset_name = "102021990_NEG650312660474055399"
+dataset_name = "102022474_NEG590266584471556814"
 dataset_path = Path("dataset") / "sample_group" / dataset_name
 
 """
@@ -936,7 +936,7 @@ simulator script. This ensures that all example scripts can be run without manua
 #     )
 
 pixel_scale = 0.1
-mask_radius = 3.5
+mask_radius = 5.5
 mask_centre = (0.0, 0.0)
 redshift_lens = 0.5
 redshift_source = 1.0
@@ -952,23 +952,23 @@ dataset_index_dict = dataset_instrument_hdu_dict_via_fits_from(
 
 vis_index = dataset_index_dict["vis"]
 
-# dataset = al.Imaging.from_fits(
-#     data_path=dataset_path / "data.fits",
-#     data_hdu=vis_index * 3 + 1,
-#     noise_map_path=dataset_path / "data.fits",
-#     noise_map_hdu=vis_index * 3 + 3,
-#     psf_path=dataset_path / "data.fits",
-#     psf_hdu=vis_index * 3 + 2,
-#     pixel_scales=pixel_scale,
-#     check_noise_map=False,
-# )
-
 dataset = al.Imaging.from_fits(
     data_path=dataset_path / "data.fits",
-    psf_path=dataset_path / "psf.fits",
-    noise_map_path=dataset_path / "noise_map.fits",
+    data_hdu=vis_index * 3 + 1,
+    noise_map_path=dataset_path / "data.fits",
+    noise_map_hdu=vis_index * 3 + 3,
+    psf_path=dataset_path / "data.fits",
+    psf_hdu=vis_index * 3 + 2,
     pixel_scales=pixel_scale,
+    check_noise_map=False,
 )
+#
+# dataset = al.Imaging.from_fits(
+#     data_path=dataset_path / "data.fits",
+#     psf_path=dataset_path / "psf.fits",
+#     noise_map_path=dataset_path / "noise_map.fits",
+#     pixel_scales=pixel_scale,
+# )
 
 
 #aplt.subplot_imaging_dataset(dataset=dataset)

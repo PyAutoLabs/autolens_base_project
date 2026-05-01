@@ -52,13 +52,13 @@ except ImportError:
 # USER SETTINGS — edit these before running
 # ─────────────────────────────────────────────────────────────────────────────
 
-dataset_name = "102019596_NEG637748088500119037"
+dataset_name = "102022474_NEG590266584471556814"
 dataset_path = path.join("..", "..", "..", "dataset", "sample_group", dataset_name)
 
 pixel_scales = 0.1   # arcsec / pixel
 
 # Circular mask applied to the data before all GUI steps
-mask_radius = 6.5
+mask_radius = 7.5
 mask_centre = (0.0, 0.0)   # (y, x) arcsec — overridden by info.json if present
 
 # Search box (pixels) — area around each click searched for the brightest pixel

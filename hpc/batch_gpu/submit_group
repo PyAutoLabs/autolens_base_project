@@ -1,6 +1,6 @@
 #!/bin/bash -l
 
-#SBATCH -J group
+#SBATCH -J 814
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:1
 #SBATCH --ntasks=1
@@ -30,7 +30,7 @@ export JAX_ENABLE_X64=True
 # Each entry is the name of a subdirectory inside dataset/.
 # Omit --dataset entirely if the project has a single dataset.
 # Update --array above to match the number of datasets (0 to N-1).
- -------------------------------
+#-------------------------------
 datasets=(
 sample_group
 )
@@ -53,7 +53,7 @@ nvidia-smi
 # All path management is handled inside scripts/base.py via Path(__file__).
 # pixel_scale and n_batch are read from dataset/$dataset/info.json automatically.
 # -------------------------------
-python3 $PROJECT_PATH/scripts/group/slam.py #--dataset=$dataset
+python3 /mnt/ral/c4072114/PyAuto/autolens_base_project/scripts/group/slam.py #--dataset=$dataset
 
 echo "Finished dataset: $dataset"
 date
