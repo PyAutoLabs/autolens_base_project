@@ -764,6 +764,7 @@ def light_lp(
         **settings_search.search_dict,
         n_live=n_live,
         n_batch=n_batch,
+        n_like_max=200000,
     )
 
     return search.fit(model=model, analysis=analysis, **settings_search.fit_dict)
@@ -907,6 +908,7 @@ def mass_total(
         **settings_search.search_dict,
         n_live=n_live,
         n_batch=n_batch,
+        n_like_max=200000,
     )
 
     return search.fit(model=model, analysis=analysis, **settings_search.fit_dict)
