@@ -58,7 +58,7 @@ REMOTE="${HPC_HOST}:${HPC_BASE}/${PROJECT_NAME}"
 CODE_DIRS=(config hpc scripts slam_pipeline simulators)
 
 # Top-level source files that live at the project root (not in a subdirectory).
-ROOT_FILES=(activate.sh util.py __init__.py README.rst LICENSE)
+ROOT_FILES=(activate.sh util.py __init__.py README.md LICENSE)
 
 # Raw data — pushed with --ignore-existing.
 # FITS files are written once and never modified, so any file already present
