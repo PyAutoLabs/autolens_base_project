@@ -52,7 +52,7 @@ except ImportError:
 # USER SETTINGS — edit these before running
 # ─────────────────────────────────────────────────────────────────────────────
 
-dataset_name = "102022474_NEG590266584471556814"
+dataset_name = "102020057_NEG582019329494705421"
 dataset_path = path.join("..", "..", "..", "dataset", "sample_group", dataset_name)
 
 pixel_scales = 0.1   # arcsec / pixel
@@ -284,13 +284,13 @@ def main():
     # ── Read mask parameters (info.json overrides USER SETTINGS) ──────────
     _mask_radius = mask_radius
     _mask_centre = mask_centre
-    info_path = path.join(dataset_path, "info.json")
-    if path.exists(info_path):
-        with open(info_path) as f:
-            info = json.load(f)
-        _mask_radius = info.get("mask_radius", mask_radius) + 1.5
-        _mask_centre = tuple(info.get("mask_centre", list(mask_centre)))
-        print(f"  info.json found — mask_radius={_mask_radius}, mask_centre={_mask_centre}")
+    # info_path = path.join(dataset_path, "info.json")
+    # if path.exists(info_path):
+    #     with open(info_path) as f:
+    #         info = json.load(f)
+    #     _mask_radius = info.get("mask_radius", mask_radius) + 1.5
+    #     _mask_centre = tuple(info.get("mask_centre", list(mask_centre)))
+    #     print(f"  info.json found — mask_radius={_mask_radius}, mask_centre={_mask_centre}")
 
     # ── Apply circular mask ────────────────────────────────────────────────
     main_mask = al.Mask2D.circular(
