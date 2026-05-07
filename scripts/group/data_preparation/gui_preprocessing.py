@@ -52,13 +52,13 @@ except ImportError:
 # USER SETTINGS — edit these before running
 # ─────────────────────────────────────────────────────────────────────────────
 
-dataset_name = "102020057_NEG582019329494705421"
+dataset_name = "Tile102007299RA0702283866574DECNEG0660415308762"
 dataset_path = path.join("..", "..", "..", "dataset", "sample_group", dataset_name)
 
 pixel_scales = 0.1   # arcsec / pixel
 
 # Circular mask applied to the data before all GUI steps
-mask_radius = 7.5
+mask_radius = 4.5
 mask_centre = (0.0, 0.0)   # (y, x) arcsec — overridden by info.json if present
 
 # Search box (pixels) — area around each click searched for the brightest pixel
@@ -82,17 +82,24 @@ def _load_log_data(data):
     )
     return al.Array2D.no_mask(values=arr, pixel_scales=pixel_scales)
 
-
 def _load_rgb(dataset_path):
-    """Return an RGBA/RGB numpy array from rgb_0.png, or None if unavailable."""
+    """Return an RGBA/RGB numpy array from rgb_0.(png/jpg), or None if unavailable."""
     if not _PIL_AVAILABLE:
         return None
-    rgb_path = path.join(dataset_path, "rgb_0.png")
-    if path.exists(rgb_path):
-        try:
-            return np.array(PILImage.open(rgb_path))
-        except Exception:
-            pass
+
+    possible_files = [
+        path.join(dataset_path, "rgb_0.png"),
+        path.join(dataset_path, "rgb_0.jpg"),
+        path.join(dataset_path, "rgb_0.jpeg"),
+    ]
+
+    for rgb_path in possible_files:
+        if path.exists(rgb_path):
+            try:
+                return np.array(PILImage.open(rgb_path))
+            except Exception:
+                pass
+
     return None
 
 
